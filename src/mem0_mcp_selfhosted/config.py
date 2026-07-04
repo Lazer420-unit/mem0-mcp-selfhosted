@@ -45,7 +45,7 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo], dict[str, Any] |
 
     # --- Top-level provider default (cascades to LLM and graph LLM) ---
     _provider_default = env("MEM0_PROVIDER", "anthropic")
-    _supported_llm_providers = ("anthropic", "ollama")
+    _supported_llm_providers = ("anthropic", "ollama", "openai")
     if _provider_default not in _supported_llm_providers:
         raise ValueError(
             f"Unsupported MEM0_PROVIDER={_provider_default!r}. "
@@ -61,7 +61,12 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo], dict[str, Any] |
         )
 
     _llm_model_defaults = {"anthropic": "claude-opus-4-6", "ollama": "qwen3:14b"}
-    llm_model = env("MEM0_LLM_MODEL", _llm_model_defaults[llm_provider])
+    llm_model = env("MEM0_LLM_MODEL", _llm_model_defaults.get(llm_provider, ""))
+    if llm_provider == "openai" and not llm_model:
+        raise ValueError(
+            "MEM0_LLM_MODEL must be set when MEM0_LLM_PROVIDER=openai "
+            "(no default model for openai-compatible endpoints)."
+        )
     llm_max_tokens = int(env("MEM0_LLM_MAX_TOKENS", "16384"))
 
     llm_config: dict[str, Any] = {"model": llm_model}
@@ -71,6 +76,19 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo], dict[str, Any] |
             llm_config["api_key"] = token
     elif llm_provider == "ollama":
         llm_config["ollama_base_url"] = _resolve_ollama_url("MEM0_LLM_URL")
+    elif llm_provider == "openai":
+        # Generic OpenAI-compatible provider (NVIDIA NIM today; any
+        # OpenAI-compatible endpoint later via env change, no code change).
+        # MEM0_LLM_URL is read directly on purpose — NOT via
+        # _resolve_ollama_url(), whose fallback chain (MEM0_OLLAMA_URL ->
+        # http://localhost:11434) would be wrong for an OpenAI endpoint.
+        base_url = env("MEM0_LLM_URL")
+        if base_url:
+            llm_config["openai_base_url"] = base_url
+        api_key = env("OPENAI_API_KEY") or env("MEM0_LLM_API_KEY")
+        if api_key:
+            llm_config["api_key"] = api_key
+        llm_config["max_tokens"] = llm_max_tokens
 
     # --- Embedder ---
     embed_provider = env("MEM0_EMBED_PROVIDER", "ollama")
